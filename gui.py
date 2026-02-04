@@ -45,6 +45,7 @@ class TelegramBot:
         if not self._is_authorized(update.effective_user.id):
             await update.message.reply_text("Unauthorized.")
             return
+        self.log(f"[CMD] /start from {update.effective_user.first_name}")
         await update.message.reply_text(
             "Moltbot ready! Send me a message.\n\n"
             "Commands:\n"
@@ -57,11 +58,13 @@ class TelegramBot:
             return
         user_id = update.effective_user.id
         self.conversations[user_id] = []
+        self.log(f"[CMD] /clear from {update.effective_user.first_name}")
         await update.message.reply_text("Conversation cleared.")
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update.effective_user.id):
             return
+        self.log(f"[CMD] /status from {update.effective_user.first_name}")
         model = self.get_current_model()
         if model:
             await update.message.reply_text(f"Server running with: {model}")
@@ -74,7 +77,12 @@ class TelegramBot:
             return
 
         user_id = update.effective_user.id
+        user_name = update.effective_user.first_name or f"User {user_id}"
         user_message = update.message.text
+
+        # Log incoming message
+        preview = user_message[:50] + "..." if len(user_message) > 50 else user_message
+        self.log(f"[IN] {user_name}: {preview}")
 
         # Show typing
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -124,6 +132,11 @@ class TelegramBot:
 
                     data = await resp.json()
                     assistant_message = data["choices"][0]["message"]["content"]
+
+                    # Log outgoing response
+                    preview = assistant_message[:80] + "..." if len(assistant_message) > 80 else assistant_message
+                    preview = preview.replace('\n', ' ')
+                    self.log(f"[OUT] {preview}")
 
                     # Add to history
                     self.conversations[user_id].append({"role": "assistant", "content": assistant_message})
