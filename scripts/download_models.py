@@ -22,13 +22,20 @@ MODELS = {
         "filename": "Qwen2.5-7B-Instruct-Q5_K_M.gguf",
         "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q5_K_M.gguf",
         "size_gb": 5.44,
-        "sha256": None  # Optional checksum
+        "sha256": None
     },
     "coder": {
-        "name": "Qwen3-Coder-30B-A3B-Instruct Q4_K_M",
-        "filename": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
-        "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
-        "size_gb": 18.6,
+        "name": "Qwen2.5-Coder-7B-Instruct Q5_K_M",
+        "filename": "Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf",
+        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf",
+        "size_gb": 5.44,
+        "sha256": None
+    },
+    "reasoning": {
+        "name": "Qwen3-14B Q4_K_M",
+        "filename": "Qwen3-14B-Q4_K_M.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+        "size_gb": 9.0,
         "sha256": None
     }
 }

@@ -103,12 +103,25 @@ class TelegramBot:
         if model == "forecaster":
             system_prompt = (
                 "You are a prediction market analyst. Provide probability estimates with ranges, "
-                "base rates, key drivers, and uncertainty notes. Be conservative and data-driven."
+                "base rates, key drivers, and uncertainty notes. Be conservative and data-driven. "
+                "Use web_search to find current information. Use calculate for math. Use get_base_rate for historical frequencies."
+            )
+        elif model == "coder":
+            system_prompt = (
+                "You are an expert software engineer with tool access. Provide clear, working code with explanations. "
+                "Use web_search to look up documentation and APIs. Use calculate for complexity analysis. "
+                "Be concise and focus on correctness."
+            )
+        elif model == "reasoning":
+            system_prompt = (
+                "You are a highly capable reasoning assistant with tools. Break down complex problems step by step. "
+                "Use web_search to research topics. Use calculate for math. Use get_base_rate for historical data. "
+                "Think carefully and show your reasoning."
             )
         else:
             system_prompt = (
-                "You are an expert software engineer. Provide clear, working code with explanations. "
-                "Be concise and focus on correctness."
+                "You are a helpful AI assistant with tool access. Use web_search for information, "
+                "calculate for math, and get_base_rate for historical frequencies."
             )
 
         messages = [{"role": "system", "content": system_prompt}] + self.conversations[user_id]
