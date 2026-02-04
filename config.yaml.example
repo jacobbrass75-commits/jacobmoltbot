@@ -1,0 +1,56 @@
+# Moltbot Configuration
+# ====================
+# Copy this file to config.yaml and fill in your values
+
+# Telegram Settings
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"  # Get from @BotFather
+  allowed_user_ids:
+    - 0  # Replace with your Telegram user ID
+
+# Model Configurations
+models:
+  forecaster:
+    name: "Qwen2.5-7B-Instruct"
+    file: "Qwen2.5-7B-Instruct-Q5_K_M.gguf"
+    context_length: 4096
+    temperature: 0.3
+    top_p: 0.9
+    gpu_layers: -1  # -1 = all layers on GPU
+    offload_experts: false
+
+  coder:
+    name: "Qwen3-Coder-30B-A3B"
+    file: "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+    context_length: 8192
+    temperature: 0.2
+    top_p: 0.95
+    gpu_layers: -1
+    offload_experts: true  # MoE layers to CPU
+    expert_offload_pattern: ".ffn_.*_exps.=CPU"
+
+# Server Settings
+server:
+  host: "127.0.0.1"
+  port: 8080
+  vulkan: true
+  threads: 8
+  batch_size: 512
+  cache_type_k: "q8_0"
+  cache_type_v: "q4_0"
+
+# Paths
+paths:
+  models_dir: "models"
+  data_dir: "data"
+  logs_dir: "logs"
+  llama_cpp: "llama-cpp/llama-server.exe"
+
+# State Persistence
+state:
+  save_conversations: true
+  max_history_tokens: 2048
+  auto_save_interval: 60
+
+# Default model on startup
+default_model: "forecaster"

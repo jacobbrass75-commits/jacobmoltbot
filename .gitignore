@@ -1,0 +1,29 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Models (too large for git)
+models/*.gguf
+
+# Binaries
+llama-cpp/
+
+# Runtime data
+logs/
+data/conversations/
+
+# Config with secrets
+config.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

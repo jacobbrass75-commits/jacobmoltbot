@@ -1,0 +1,271 @@
+"""
+Moltbot Tool Registry
+=====================
+Defines and executes tools that the model can call.
+"""
+
+import asyncio
+import logging
+import math
+from typing import Callable, Any, Optional
+from dataclasses import dataclass
+from functools import wraps
+
+from simpleeval import simple_eval, EvalWithCompoundTypes
+from duckduckgo_search import DDGS
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolResult:
+    """Result of a tool execution."""
+    success: bool
+    content: str
+    error: Optional[str] = None
+
+
+class ToolRegistry:
+    """Registry of available tools."""
+
+    def __init__(self):
+        self._tools: dict[str, Callable] = {}
+        self._register_builtin_tools()
+
+    def _register_builtin_tools(self) -> None:
+        """Register the built-in tools."""
+        self.register("web_search", self._web_search)
+        self.register("calculate", self._calculate)
+        self.register("get_base_rate", self._get_base_rate)
+
+    def register(self, name: str, func: Callable) -> None:
+        """Register a tool function."""
+        self._tools[name] = func
+        logger.debug(f"Registered tool: {name}")
+
+    async def execute(self, name: str, args: dict) -> ToolResult:
+        """Execute a tool by name with given arguments."""
+        if name not in self._tools:
+            return ToolResult(
+                success=False,
+                content=f"Unknown tool: {name}",
+                error="tool_not_found"
+            )
+
+        try:
+            func = self._tools[name]
+            if asyncio.iscoroutinefunction(func):
+                result = await func(**args)
+            else:
+                result = await asyncio.to_thread(func, **args)
+            return ToolResult(success=True, content=str(result))
+        except Exception as e:
+            logger.error(f"Tool execution failed: {name} - {e}")
+            return ToolResult(
+                success=False,
+                content=f"Tool error: {str(e)}",
+                error=str(e)
+            )
+
+    def _web_search(self, query: str, max_results: int = 5) -> str:
+        """
+        Search the web using DuckDuckGo.
+
+        Args:
+            query: Search query string.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            Formatted search results.
+        """
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+
+            if not results:
+                return "No search results found."
+
+            formatted = []
+            for i, r in enumerate(results, 1):
+                formatted.append(
+                    f"{i}. **{r.get('title', 'No title')}**\n"
+                    f"   {r.get('body', 'No description')}\n"
+                    f"   Source: {r.get('href', 'Unknown')}"
+                )
+
+            return "\n\n".join(formatted)
+
+        except Exception as e:
+            logger.error(f"Web search failed: {e}")
+            return f"Search failed: {str(e)}"
+
+    def _calculate(self, expression: str) -> str:
+        """
+        Safely evaluate a mathematical expression.
+
+        Args:
+            expression: Mathematical expression to evaluate.
+
+        Returns:
+            The result of the calculation.
+        """
+        # Safe math functions
+        safe_functions = {
+            "abs": abs,
+            "round": round,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "len": len,
+            "pow": pow,
+            "sqrt": math.sqrt,
+            "log": math.log,
+            "log10": math.log10,
+            "log2": math.log2,
+            "exp": math.exp,
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "asin": math.asin,
+            "acos": math.acos,
+            "atan": math.atan,
+            "ceil": math.ceil,
+            "floor": math.floor,
+        }
+
+        safe_names = {
+            "pi": math.pi,
+            "e": math.e,
+            "inf": float('inf'),
+        }
+
+        try:
+            evaluator = EvalWithCompoundTypes(
+                functions=safe_functions,
+                names=safe_names
+            )
+            result = evaluator.eval(expression)
+            return f"{expression} = {result}"
+        except Exception as e:
+            return f"Calculation error: {str(e)}"
+
+    def _get_base_rate(self, event_type: str, context: Optional[str] = None) -> str:
+        """
+        Get historical base rate for an event type.
+
+        Args:
+            event_type: Type of event to look up.
+            context: Optional context for more specific lookup.
+
+        Returns:
+            Base rate information and sources.
+        """
+        # Curated base rates for common prediction market events
+        base_rates = {
+            # Political
+            "incumbent_reelection": {
+                "rate": "~70%",
+                "source": "Historical US presidential elections since 1900",
+                "notes": "Incumbents win ~70% of reelection bids in normal economic conditions"
+            },
+            "party_retention": {
+                "rate": "~50%",
+                "source": "US presidential elections post-WW2",
+                "notes": "Party retains White House ~50% of the time after 8 years"
+            },
+            "midterm_loss": {
+                "rate": "~90%",
+                "source": "US midterm elections",
+                "notes": "President's party loses House seats ~90% of midterms"
+            },
+
+            # Economic
+            "recession_annual": {
+                "rate": "~15%",
+                "source": "NBER recession data 1945-present",
+                "notes": "US enters recession in any given year ~15% of the time"
+            },
+            "market_crash_10pct": {
+                "rate": "~30%",
+                "source": "S&P 500 history",
+                "notes": "10%+ drawdown occurs in ~30% of calendar years"
+            },
+            "market_crash_20pct": {
+                "rate": "~10%",
+                "source": "S&P 500 history",
+                "notes": "20%+ drawdown (bear market) occurs in ~10% of years"
+            },
+
+            # Technology
+            "startup_failure": {
+                "rate": "~90%",
+                "source": "Startup Genome Report",
+                "notes": "~90% of startups fail within 10 years"
+            },
+            "major_tech_outage": {
+                "rate": "~5-10%",
+                "source": "Major cloud provider incident reports",
+                "notes": "Major outage affecting millions happens 1-2x per year per provider"
+            },
+
+            # Geopolitical
+            "interstate_war": {
+                "rate": "~1-2%",
+                "source": "Correlates of War Project",
+                "notes": "New interstate war involving major power starts ~1-2% of years"
+            },
+            "coup_attempt": {
+                "rate": "~2%",
+                "source": "Powell & Thyne coup dataset",
+                "notes": "~2% of country-years see coup attempts globally"
+            },
+
+            # Science/Health
+            "drug_approval": {
+                "rate": "~10%",
+                "source": "FDA clinical trial data",
+                "notes": "~10% of drugs entering Phase 1 reach FDA approval"
+            },
+            "pandemic_novel": {
+                "rate": "~1%",
+                "source": "Historical pandemic frequency",
+                "notes": "Novel pandemic pathogen emerges ~1% of years"
+            },
+
+            # Default for unknown events
+            "unknown": {
+                "rate": "Unknown",
+                "source": "No curated data available",
+                "notes": "Consider searching for historical frequency data"
+            }
+        }
+
+        # Normalize lookup key
+        key = event_type.lower().replace(" ", "_").replace("-", "_")
+
+        # Try exact match
+        if key in base_rates:
+            data = base_rates[key]
+        else:
+            # Try partial match
+            matched = None
+            for k in base_rates:
+                if k in key or key in k:
+                    matched = base_rates[k]
+                    break
+            data = matched or base_rates["unknown"]
+
+        result = f"**Base Rate for '{event_type}':**\n"
+        result += f"- Rate: {data['rate']}\n"
+        result += f"- Source: {data['source']}\n"
+        result += f"- Notes: {data['notes']}"
+
+        if context:
+            result += f"\n- Context provided: {context}"
+            result += "\n\n*Note: Adjust base rate based on specific context factors.*"
+
+        return result
+
+    def list_tools(self) -> list[str]:
+        """List all registered tool names."""
+        return list(self._tools.keys())
