@@ -19,6 +19,9 @@ data/conversations/
 # Config with secrets
 config.yaml
 
+# Environment variables (API keys)
+.env
+
 # IDE
 .vscode/
 .idea/

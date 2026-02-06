@@ -1,230 +1,59 @@
 """
-Moltbot Desktop Control Panel
-=============================
-GUI for starting/stopping the server, switching models, and running Telegram bot.
+Moltbot Control Panel - OpenAI Edition
+=======================================
+GUI for controlling the OpenAI-powered Candace bot.
 """
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import asyncio
 import threading
-import subprocess
-import time
 import sys
 import os
 from pathlib import Path
 import queue
-import json
 
 import yaml
-import aiohttp
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-from telegram.constants import ChatAction
-
-
-class TelegramBot:
-    """Telegram bot that forwards messages to llama-server."""
-
-    def __init__(self, token: str, allowed_users: list, server_url: str, log_func, model_getter):
-        self.token = token
-        self.allowed_users = set(allowed_users)
-        self.server_url = server_url
-        self.log = log_func
-        self.get_current_model = model_getter
-        self.app = None
-        self._running = False
-        self.conversations = {}  # user_id -> list of messages
-
-    def _is_authorized(self, user_id: int) -> bool:
-        if not self.allowed_users or 0 in self.allowed_users:
-            return True
-        return user_id in self.allowed_users
-
-    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_authorized(update.effective_user.id):
-            await update.message.reply_text("Unauthorized.")
-            return
-        self.log(f"[CMD] /start from {update.effective_user.first_name}")
-        await update.message.reply_text(
-            "Moltbot ready! Send me a message.\n\n"
-            "Commands:\n"
-            "/clear - Clear conversation\n"
-            "/status - Check server status"
-        )
-
-    async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_authorized(update.effective_user.id):
-            return
-        user_id = update.effective_user.id
-        self.conversations[user_id] = []
-        self.log(f"[CMD] /clear from {update.effective_user.first_name}")
-        await update.message.reply_text("Conversation cleared.")
-
-    async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_authorized(update.effective_user.id):
-            return
-        self.log(f"[CMD] /status from {update.effective_user.first_name}")
-        model = self.get_current_model()
-        if model:
-            await update.message.reply_text(f"Server running with: {model}")
-        else:
-            await update.message.reply_text("Server not running.")
-
-    async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_authorized(update.effective_user.id):
-            await update.message.reply_text("Unauthorized.")
-            return
-
-        user_id = update.effective_user.id
-        user_name = update.effective_user.first_name or f"User {user_id}"
-        user_message = update.message.text
-
-        # Log incoming message
-        preview = user_message[:50] + "..." if len(user_message) > 50 else user_message
-        self.log(f"[IN] {user_name}: {preview}")
-
-        # Show typing
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
-        # Get or create conversation history
-        if user_id not in self.conversations:
-            self.conversations[user_id] = []
-
-        # Add user message
-        self.conversations[user_id].append({"role": "user", "content": user_message})
-
-        # Keep only last 10 messages to stay within context
-        if len(self.conversations[user_id]) > 10:
-            self.conversations[user_id] = self.conversations[user_id][-10:]
-
-        # Get current model for system prompt
-        model = self.get_current_model()
-        if model == "forecaster":
-            system_prompt = (
-                "You are a prediction market analyst. Provide probability estimates with ranges, "
-                "base rates, key drivers, and uncertainty notes. Be conservative and data-driven. "
-                "Use web_search to find current information. Use calculate for math. Use get_base_rate for historical frequencies."
-            )
-        elif model == "coder":
-            system_prompt = (
-                "You are an expert software engineer with tool access. Provide clear, working code with explanations. "
-                "Use web_search to look up documentation and APIs. Use calculate for complexity analysis. "
-                "Be concise and focus on correctness."
-            )
-        elif model == "reasoning":
-            system_prompt = (
-                "You are a highly capable reasoning assistant with tools. Break down complex problems step by step. "
-                "Use web_search to research topics. Use calculate for math. Use get_base_rate for historical data. "
-                "Think carefully and show your reasoning."
-            )
-        else:
-            system_prompt = (
-                "You are a helpful AI assistant with tool access. Use web_search for information, "
-                "calculate for math, and get_base_rate for historical frequencies."
-            )
-
-        messages = [{"role": "system", "content": system_prompt}] + self.conversations[user_id]
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                    "stream": False
-                }
-                async with session.post(
-                    f"{self.server_url}/v1/chat/completions",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120)
-                ) as resp:
-                    if resp.status != 200:
-                        await update.message.reply_text(f"Server error: {resp.status}")
-                        return
-
-                    data = await resp.json()
-                    assistant_message = data["choices"][0]["message"]["content"]
-
-                    # Log outgoing response
-                    preview = assistant_message[:80] + "..." if len(assistant_message) > 80 else assistant_message
-                    preview = preview.replace('\n', ' ')
-                    self.log(f"[OUT] {preview}")
-
-                    # Add to history
-                    self.conversations[user_id].append({"role": "assistant", "content": assistant_message})
-
-                    # Send response (split if too long)
-                    if len(assistant_message) <= 4000:
-                        await update.message.reply_text(assistant_message)
-                    else:
-                        # Split on newlines
-                        chunks = []
-                        current = ""
-                        for line in assistant_message.split('\n'):
-                            if len(current) + len(line) + 1 > 4000:
-                                chunks.append(current)
-                                current = line
-                            else:
-                                current += ('\n' if current else '') + line
-                        if current:
-                            chunks.append(current)
-                        for chunk in chunks:
-                            await update.message.reply_text(chunk)
-                            await asyncio.sleep(0.5)
-
-        except asyncio.TimeoutError:
-            await update.message.reply_text("Request timed out. Try a shorter message.")
-        except aiohttp.ClientError as e:
-            await update.message.reply_text(f"Connection error: Is the server running?")
-            self.log(f"Telegram error: {e}")
-        except Exception as e:
-            await update.message.reply_text(f"Error: {str(e)}")
-            self.log(f"Telegram error: {e}")
-
-    async def start(self):
-        self.app = Application.builder().token(self.token).build()
-
-        self.app.add_handler(CommandHandler("start", self._cmd_start))
-        self.app.add_handler(CommandHandler("clear", self._cmd_clear))
-        self.app.add_handler(CommandHandler("status", self._cmd_status))
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
-
-        self._running = True
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling(drop_pending_updates=True)
-        self.log("Telegram bot started!")
-
-    async def stop(self):
-        if self.app and self._running:
-            self._running = False
-            await self.app.updater.stop()
-            await self.app.stop()
-            await self.app.shutdown()
-            self.log("Telegram bot stopped.")
+from dotenv import load_dotenv
 
 
 class MoltbotGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Moltbot Control Panel")
-        self.root.geometry("500x450")
+        self.root.title("Candace Control Panel")
+        self.root.geometry("550x500")
         self.root.resizable(True, True)
 
         # State
-        self.server_process = None
-        self.current_model = None
         self.log_queue = queue.Queue()
         self.base_dir = Path(__file__).parent
+        self.inference_engine = None
+        self.tool_registry = None
+        self.state_manager = None
+        self.is_running = False
 
         # Telegram bot
         self.telegram_bot = None
         self.telegram_thread = None
         self.telegram_loop = None
 
+        # Load environment variables from .env
+        env_path = self.base_dir / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+
         # Load config
         self.config = self._load_config()
+
+        # Available OpenAI models
+        self.models = {
+            "gpt-5.2": "GPT-5.2 (Latest)",
+            "gpt-5.2-pro": "GPT-5.2 Pro (Extended reasoning)",
+            "gpt-5": "GPT-5",
+            "gpt-4o": "GPT-4o",
+            "gpt-4o-mini": "GPT-4o Mini (Fast & cheap)",
+            "o1": "O1 (Reasoning)",
+        }
 
         # Build UI
         self._build_ui()
@@ -251,7 +80,7 @@ class MoltbotGUI:
         status_left = ttk.Frame(status_frame)
         status_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self.status_label = ttk.Label(status_left, text="Stopped", font=("Segoe UI", 12, "bold"))
+        self.status_label = ttk.Label(status_left, text="Ready", font=("Segoe UI", 12, "bold"))
         self.status_label.pack(side=tk.LEFT)
 
         self.telegram_status = ttk.Label(status_left, text="", font=("Segoe UI", 9))
@@ -262,41 +91,64 @@ class MoltbotGUI:
         self._update_indicator("gray")
 
         # Model selection
-        model_frame = ttk.LabelFrame(main_frame, text="Model", padding="10")
+        model_frame = ttk.LabelFrame(main_frame, text="OpenAI Model", padding="10")
         model_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.model_var = tk.StringVar(value="forecaster")
+        self.model_var = tk.StringVar(value="gpt-5.2")
 
-        models = list(self.config.get('models', {}).keys())
-        for model in models:
-            rb = ttk.Radiobutton(model_frame, text=model.capitalize(), value=model, variable=self.model_var)
-            rb.pack(side=tk.LEFT, padx=10)
+        model_row1 = ttk.Frame(model_frame)
+        model_row1.pack(fill=tk.X)
+        model_row2 = ttk.Frame(model_frame)
+        model_row2.pack(fill=tk.X, pady=(5, 0))
+        model_row3 = ttk.Frame(model_frame)
+        model_row3.pack(fill=tk.X, pady=(5, 0))
+
+        ttk.Radiobutton(model_row1, text="GPT-5.2 (Latest)", value="gpt-5.2", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row1, text="GPT-5.2 Pro", value="gpt-5.2-pro", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row2, text="GPT-5", value="gpt-5", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row2, text="GPT-4o", value="gpt-4o", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row2, text="GPT-4o Mini", value="gpt-4o-mini", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row3, text="O1 (Reasoning)", value="o1", variable=self.model_var).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_row3, text="O1 Mini", value="o1-mini", variable=self.model_var).pack(side=tk.LEFT, padx=5)
 
         # Telegram toggle
         self.telegram_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(model_frame, text="Enable Telegram", variable=self.telegram_var).pack(side=tk.RIGHT)
+        ttk.Checkbutton(model_row1, text="Telegram Bot", variable=self.telegram_var).pack(side=tk.RIGHT)
 
         # Control buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.start_btn = ttk.Button(button_frame, text="Start", command=self._start_server, width=15)
+        self.start_btn = ttk.Button(button_frame, text="Start Candace", command=self._start, width=18)
         self.start_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.stop_btn = ttk.Button(button_frame, text="Stop", command=self._stop_server, state=tk.DISABLED, width=15)
-        self.stop_btn.pack(side=tk.LEFT)
+        self.stop_btn = ttk.Button(button_frame, text="Stop", command=self._stop, state=tk.DISABLED, width=12)
+        self.stop_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.switch_btn = ttk.Button(button_frame, text="Switch Model", command=self._switch_model, state=tk.DISABLED, width=12)
+        self.switch_btn.pack(side=tk.LEFT)
+
+        # Tools info
+        tools_frame = ttk.LabelFrame(main_frame, text="Available Tools", padding="10")
+        tools_frame.pack(fill=tk.X, pady=(0, 10))
+
+        tools_text = (
+            "web_search, calculate, get_base_rate, search_hf_models, download_hf_model,\n"
+            "polymarket_search, polymarket_analyze, polymarket_arbitrage, polymarket_positions"
+        )
+        ttk.Label(tools_frame, text=tools_text, font=("Consolas", 8), foreground="gray").pack(anchor=tk.W)
 
         # Log area
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="5")
         log_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, font=("Consolas", 9), state=tk.DISABLED)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, font=("Consolas", 9), state=tk.DISABLED)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
         # Bottom info
         info_frame = ttk.Frame(main_frame)
         info_frame.pack(fill=tk.X, pady=(10, 0))
-        ttk.Label(info_frame, text="GPU: AMD RX 9070 XT | Backend: Vulkan", font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        ttk.Label(info_frame, text="Backend: OpenAI API | Candace v2.0", font=("Segoe UI", 8)).pack(side=tk.LEFT)
 
     def _update_indicator(self, color):
         self.status_indicator.delete("all")
@@ -317,86 +169,44 @@ class MoltbotGUI:
             pass
         self.root.after(100, self._consume_logs)
 
-    def _get_current_model(self):
-        return self.current_model
-
-    def _start_server(self):
+    def _start(self):
         model = self.model_var.get()
-        self._log(f"Starting with {model} model...")
+        self._log(f"Starting Candace with {model}...")
         self._update_indicator("yellow")
         self.status_label.config(text="Starting...")
         self.start_btn.config(state=tk.DISABLED)
 
-        thread = threading.Thread(target=self._start_server_thread, args=(model,))
+        thread = threading.Thread(target=self._start_thread, args=(model,))
         thread.daemon = True
         thread.start()
 
-    def _start_server_thread(self, model):
+    def _start_thread(self, model):
         try:
-            model_cfg = self.config['models'].get(model, {})
-            server_cfg = self.config['server']
-
-            model_path = self.base_dir / self.config['paths']['models_dir'] / model_cfg['file']
-            llama_path = self.base_dir / self.config['paths']['llama_cpp']
-
-            if not model_path.exists():
-                self._log(f"ERROR: Model not found: {model_path}")
+            # Check for OpenAI key
+            if not os.getenv("OPENAI_API_KEY"):
+                self._log("ERROR: OPENAI_API_KEY not set in .env")
                 self.root.after(0, self._on_start_failed)
                 return
 
-            cmd = [
-                str(llama_path),
-                "--model", str(model_path),
-                "--host", server_cfg['host'],
-                "--port", str(server_cfg['port']),
-                "--ctx-size", str(model_cfg.get('context_length', 4096)),
-                "--n-gpu-layers", str(model_cfg.get('gpu_layers', -1)),
-                "--device", "Vulkan0",
-                "--flash-attn", "on",
-                "--threads", str(server_cfg.get('threads', 8)),
-            ]
+            # Initialize components
+            from core.tools import ToolRegistry
+            from core.state import StateManager
+            from core.openai_inference import OpenAIInferenceEngine
 
-            if model_cfg.get('offload_experts'):
-                cmd.extend(["-ot", model_cfg.get('expert_offload_pattern', '.ffn_.*_exps.=CPU')])
+            self.tool_registry = ToolRegistry()
+            self._log(f"Loaded {len(self.tool_registry.list_tools())} tools")
 
-            if server_cfg.get('cache_type_k'):
-                cmd.extend(["--cache-type-k", server_cfg['cache_type_k']])
-            if server_cfg.get('cache_type_v'):
-                cmd.extend(["--cache-type-v", server_cfg['cache_type_v']])
+            self.inference_engine = OpenAIInferenceEngine(self.tool_registry, model=model)
+            self._log(f"OpenAI engine ready: {model}")
 
-            self._log("Starting llama-server...")
-
-            self.server_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW
+            data_dir = self.base_dir / self.config['paths']['data_dir']
+            self.state_manager = StateManager(
+                data_dir=data_dir,
+                max_history_tokens=self.config['state']['max_history_tokens']
             )
 
-            self.current_model = model
-
-            # Wait for server
-            import urllib.request
-            health_url = f"http://{server_cfg['host']}:{server_cfg['port']}/health"
-
-            for i in range(90):  # 90 second timeout for larger model
-                time.sleep(1)
-                if self.server_process.poll() is not None:
-                    self._log("ERROR: Server exited unexpectedly")
-                    self.root.after(0, self._on_start_failed)
-                    return
-                try:
-                    with urllib.request.urlopen(health_url, timeout=2) as resp:
-                        if resp.status == 200:
-                            self._log(f"Server ready! Model: {model}")
-                            self.root.after(0, lambda: self._on_start_success(model))
-                            return
-                except:
-                    if i % 10 == 0:
-                        self._log(f"Loading model... ({i}s)")
-
-            self._log("ERROR: Timeout")
-            self.root.after(0, self._on_start_failed)
+            self.is_running = True
+            self.root.after(0, lambda: self._on_start_success(model))
 
         except Exception as e:
             self._log(f"ERROR: {str(e)}")
@@ -406,6 +216,7 @@ class MoltbotGUI:
         self.status_label.config(text=f"Running ({model})")
         self._update_indicator("#2ecc71")
         self.stop_btn.config(state=tk.NORMAL)
+        self.switch_btn.config(state=tk.NORMAL)
         self.start_btn.config(state=tk.DISABLED)
 
         # Start Telegram if enabled
@@ -419,16 +230,22 @@ class MoltbotGUI:
             return
 
         allowed = self.config['telegram'].get('allowed_user_ids', [])
-        server_cfg = self.config['server']
-        server_url = f"http://{server_cfg['host']}:{server_cfg['port']}"
-
-        self.telegram_bot = TelegramBot(token, allowed, server_url, self._log, self._get_current_model)
 
         def run_telegram():
             self.telegram_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.telegram_loop)
             try:
+                from tg_interface.openai_bot import OpenAIMoltbot
+
+                self.telegram_bot = OpenAIMoltbot(
+                    token=token,
+                    allowed_user_ids=allowed,
+                    inference=self.inference_engine,
+                    state_manager=self.state_manager
+                )
+
                 self.telegram_loop.run_until_complete(self.telegram_bot.start())
+                self._log("Telegram bot started!")
                 self.telegram_loop.run_forever()
             except Exception as e:
                 self._log(f"Telegram error: {e}")
@@ -449,49 +266,55 @@ class MoltbotGUI:
             self.telegram_loop = None
         self.telegram_status.config(text="")
 
+    def _switch_model(self):
+        if not self.inference_engine:
+            return
+
+        new_model = self.model_var.get()
+        if self.inference_engine.set_model(new_model):
+            self._log(f"Switched to {new_model}")
+            self.status_label.config(text=f"Running ({new_model})")
+        else:
+            self._log(f"Failed to switch to {new_model}")
+
     def _on_start_failed(self):
         self.status_label.config(text="Failed")
         self._update_indicator("#e74c3c")
         self.start_btn.config(state=tk.NORMAL)
-        self._stop_server()
+        self.is_running = False
 
-    def _stop_server(self):
+    def _stop(self):
         self._log("Stopping...")
 
         # Stop Telegram first
         self._stop_telegram()
 
-        if self.server_process:
-            try:
-                self.server_process.terminate()
-                self.server_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.server_process.kill()
-            except Exception as e:
-                self._log(f"Warning: {e}")
-            self.server_process = None
+        self.is_running = False
+        self.inference_engine = None
+        self.tool_registry = None
 
-        try:
-            subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"],
-                          capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        except:
-            pass
-
-        self.current_model = None
         self.status_label.config(text="Stopped")
         self._update_indicator("gray")
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
-        self._log("Stopped. VRAM freed.")
+        self.switch_btn.config(state=tk.DISABLED)
+        self._log("Stopped.")
 
     def _on_close(self):
-        if self.server_process:
-            self._stop_server()
+        if self.is_running:
+            self._stop()
         self.root.destroy()
 
     def run(self):
-        self._log("Moltbot Control Panel ready.")
-        self._log("Select a model and click 'Start'.")
+        self._log("Candace Control Panel ready.")
+        self._log("Select a model and click 'Start Candace'.")
+
+        # Check for API key
+        if os.getenv("OPENAI_API_KEY"):
+            self._log("OpenAI API key found.")
+        else:
+            self._log("WARNING: OPENAI_API_KEY not set in .env")
+
         self.root.mainloop()
 
 

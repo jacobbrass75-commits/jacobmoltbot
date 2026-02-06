@@ -26,3 +26,11 @@ colorama>=0.4.6  # Windows terminal colors
 
 # Math expression parsing (safe eval)
 simpleeval>=0.9.13
+
+# External AI APIs
+anthropic>=0.40.0  # Claude API
+openai>=1.50.0     # OpenAI API
+python-dotenv>=1.0.0  # Environment variable loading
+
+# HuggingFace Hub for model search and download
+huggingface-hub>=0.20.0

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 from colorama import init as colorama_init, Fore, Style
+from dotenv import load_dotenv
 
 # Initialize colorama for Windows
 colorama_init()
@@ -53,10 +54,10 @@ def setup_logging(log_dir: Path) -> None:
 def print_banner() -> None:
     """Print startup banner."""
     banner = f"""
-{Fore.CYAN}╔══════════════════════════════════════════╗
-║             {Fore.WHITE}M O L T B O T{Fore.CYAN}                ║
-║      {Fore.YELLOW}Local LLM Inference System{Fore.CYAN}         ║
-╚══════════════════════════════════════════╝{Style.RESET_ALL}
+{Fore.CYAN}+==========================================+
+|             {Fore.WHITE}M O L T B O T{Fore.CYAN}                |
+|      {Fore.YELLOW}OpenAI-Powered Assistant{Fore.CYAN}         |
++==========================================+{Style.RESET_ALL}
 """
     print(banner)
 
@@ -68,6 +69,12 @@ async def main() -> None:
     # Determine base directory
     base_dir = Path(__file__).parent
     config_path = base_dir / "config.yaml"
+
+    # Load environment variables from .env (if present)
+    env_path = base_dir / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"{Fore.GREEN}Loaded environment from .env{Style.RESET_ALL}")
 
     # Load config
     if not config_path.exists():
@@ -94,16 +101,22 @@ async def main() -> None:
         telegram_token = None
 
     # Import components
-    from core.server import LlamaServer
-    from core.inference import InferenceEngine
     from core.tools import ToolRegistry
     from core.state import StateManager
-    from tray.app import TrayApp
+    from core.openai_inference import OpenAIInferenceEngine
 
     # Initialize components
-    server = LlamaServer(config_path)
     tool_registry = ToolRegistry()
-    inference = InferenceEngine(server, tool_registry)
+
+    # Use OpenAI as the main inference engine
+    import os
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        print(f"{Fore.RED}Error: OPENAI_API_KEY not set in .env{Style.RESET_ALL}")
+        sys.exit(1)
+
+    inference = OpenAIInferenceEngine(tool_registry, model="gpt-4o")
+    print(f"{Fore.GREEN}Using OpenAI GPT-4o as primary model{Style.RESET_ALL}")
 
     data_dir = base_dir / config['paths']['data_dir']
     state_manager = StateManager(
@@ -111,20 +124,40 @@ async def main() -> None:
         max_history_tokens=config['state']['max_history_tokens']
     )
 
-    # Get event loop
-    loop = asyncio.get_running_loop()
+    # Initialize External Intelligence Layer (secure multi-AI)
+    external_layer = None
+    try:
+        from core.external import get_external_layer, APIProvider
 
-    # Initialize tray app
-    tray_app = TrayApp(server, loop)
+        log_dir = base_dir / config['paths']['logs_dir']
+        external_layer = get_external_layer(log_dir)
+
+        # Report availability (keys never logged)
+        availability = external_layer.get_availability()
+        print(f"\n{Fore.CYAN}External AI APIs:{Style.RESET_ALL}")
+        for api, available in availability.items():
+            status = f"{Fore.GREEN}configured" if available else f"{Fore.YELLOW}not configured"
+            print(f"  - {api.capitalize()}: {status}{Style.RESET_ALL}")
+
+        # Validate required keys (none required by default - all optional)
+        # To require specific APIs, uncomment:
+        # success, errors = external_layer.validate_startup([APIProvider.CLAUDE])
+        # if not success:
+        #     for error in errors:
+        #         print(f"{Fore.RED}{error}{Style.RESET_ALL}")
+        #     sys.exit(1)
+
+    except ImportError as e:
+        print(f"{Fore.YELLOW}External AI layer not available: {e}{Style.RESET_ALL}")
+        print("Install with: pip install anthropic openai python-dotenv")
 
     # Initialize Telegram bot if configured
     telegram_bot = None
     if telegram_token:
-        from telegram.bot import MoltbotTelegram
-        telegram_bot = MoltbotTelegram(
+        from tg_interface.openai_bot import OpenAIMoltbot
+        telegram_bot = OpenAIMoltbot(
             token=telegram_token,
             allowed_user_ids=config['telegram']['allowed_user_ids'],
-            server=server,
             inference=inference,
             state_manager=state_manager
         )
@@ -141,18 +174,15 @@ async def main() -> None:
 
     try:
         # Start components
-        print(f"{Fore.GREEN}Starting system tray...{Style.RESET_ALL}")
-        tray_app.start()
-
         if telegram_bot:
             print(f"{Fore.GREEN}Starting Telegram bot...{Style.RESET_ALL}")
             await telegram_bot.start()
 
         print(f"\n{Fore.GREEN}Moltbot is running!{Style.RESET_ALL}")
-        print(f"  - System tray icon active")
+        print(f"  - Model: {Fore.CYAN}GPT-4o{Style.RESET_ALL} (OpenAI)")
         if telegram_bot:
             print(f"  - Telegram bot listening")
-        print(f"  - Server: {Fore.YELLOW}Not started{Style.RESET_ALL} (use tray or /start)")
+        print(f"  - Tools: {len(tool_registry.list_tools())} available")
         print(f"\nPress Ctrl+C to quit.\n")
 
         # Wait for shutdown
@@ -168,8 +198,6 @@ async def main() -> None:
         if telegram_bot:
             await telegram_bot.stop()
 
-        await server.stop()
-        tray_app.stop()
         state_manager.save_all()
 
         print(f"\n{Fore.CYAN}Moltbot stopped. Goodbye!{Style.RESET_ALL}")

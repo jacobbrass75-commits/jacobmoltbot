@@ -37,6 +37,12 @@ class ToolRegistry:
         self.register("web_search", self._web_search)
         self.register("calculate", self._calculate)
         self.register("get_base_rate", self._get_base_rate)
+        self.register("search_hf_models", self._search_hf_models)
+        self.register("download_hf_model", self._download_hf_model)
+        self.register("polymarket_search", self._polymarket_search)
+        self.register("polymarket_analyze", self._polymarket_analyze)
+        self.register("polymarket_arbitrage", self._polymarket_arbitrage)
+        self.register("polymarket_positions", self._polymarket_positions)
 
     def register(self, name: str, func: Callable) -> None:
         """Register a tool function."""
@@ -265,6 +271,169 @@ class ToolRegistry:
             result += "\n\n*Note: Adjust base rate based on specific context factors.*"
 
         return result
+
+    def _search_hf_models(
+        self,
+        query: str,
+        limit: int = 5,
+        quantization: Optional[str] = None
+    ) -> str:
+        """
+        Search HuggingFace for GGUF models.
+
+        Args:
+            query: Search query (e.g., "Qwen 7B instruct")
+            limit: Maximum results to return
+            quantization: Filter by quantization (e.g., "Q4_K_M", "Q5_K_M")
+
+        Returns:
+            Formatted search results
+        """
+        try:
+            from .huggingface import HuggingFaceClient
+
+            client = HuggingFaceClient()
+            results = client.search_gguf_models(query, limit=limit)
+
+            if not results:
+                return "No GGUF models found matching your query."
+
+            formatted = []
+            for i, r in enumerate(results, 1):
+                files = r.gguf_files
+                if quantization:
+                    files = [f for f in files if f.quantization and
+                            quantization.upper() in f.quantization.upper()]
+
+                if not files:
+                    continue
+
+                file_list = ", ".join(f.filename for f in files[:5])
+                if len(files) > 5:
+                    file_list += f" (+{len(files) - 5} more)"
+
+                formatted.append(
+                    f"{i}. **{r.model_name}** by {r.author}\n"
+                    f"   Repo: `{r.repo_id}`\n"
+                    f"   Downloads: {r.downloads:,} | Likes: {r.likes}\n"
+                    f"   GGUF files: {file_list}"
+                )
+
+            return "\n\n".join(formatted) if formatted else "No matching GGUF files found."
+
+        except Exception as e:
+            logger.error(f"HuggingFace search failed: {e}")
+            return f"Search failed: {str(e)}"
+
+    def _download_hf_model(
+        self,
+        repo_id: str,
+        filename: str
+    ) -> str:
+        """
+        Download a GGUF model from HuggingFace.
+
+        Args:
+            repo_id: HuggingFace repo (e.g., "bartowski/Qwen2.5-7B-Instruct-GGUF")
+            filename: GGUF file to download (e.g., "Qwen2.5-7B-Instruct-Q5_K_M.gguf")
+
+        Returns:
+            Status message
+        """
+        from pathlib import Path
+
+        try:
+            from .huggingface import HuggingFaceClient
+
+            models_dir = Path(__file__).parent.parent / "models"
+            client = HuggingFaceClient()
+
+            target = models_dir / Path(filename).name
+            if target.exists():
+                return f"Model already exists: {target}"
+
+            info = client.get_model_info(repo_id, filename)
+            if info and info.size_gb:
+                size_str = f" ({info.size_gb:.1f} GB)"
+            else:
+                size_str = ""
+
+            path = client.download_model(repo_id, filename, models_dir)
+
+            return f"Downloaded successfully{size_str}: {path}"
+
+        except Exception as e:
+            logger.error(f"Download failed: {e}")
+            return f"Download failed: {str(e)}"
+
+    def _polymarket_search(self, query: str, limit: int = 10) -> str:
+        """
+        Search Polymarket for prediction markets.
+
+        Args:
+            query: Search term (e.g., "bitcoin", "election")
+            limit: Max results
+
+        Returns:
+            Matching markets
+        """
+        try:
+            from .polymarket import search_markets
+            return search_markets(query, limit)
+        except Exception as e:
+            logger.error(f"Polymarket search failed: {e}")
+            return f"Search failed: {str(e)}"
+
+    def _polymarket_analyze(self, market: str) -> str:
+        """
+        Analyze a specific Polymarket market.
+
+        Args:
+            market: Market URL or slug
+
+        Returns:
+            Market analysis with signals
+        """
+        try:
+            from .polymarket import analyze_market
+            return analyze_market(market)
+        except Exception as e:
+            logger.error(f"Polymarket analysis failed: {e}")
+            return f"Analysis failed: {str(e)}"
+
+    def _polymarket_arbitrage(self, min_profit: float = 0.5) -> str:
+        """
+        Find Polymarket arbitrage opportunities.
+
+        Args:
+            min_profit: Minimum profit percentage
+
+        Returns:
+            List of arbitrage opportunities
+        """
+        try:
+            from .polymarket import find_arbitrage
+            return find_arbitrage(min_profit)
+        except Exception as e:
+            logger.error(f"Polymarket arbitrage scan failed: {e}")
+            return f"Scan failed: {str(e)}"
+
+    def _polymarket_positions(self, wallet_address: str) -> str:
+        """
+        Get a user's Polymarket positions.
+
+        Args:
+            wallet_address: Ethereum wallet (0x...)
+
+        Returns:
+            User's positions and P&L
+        """
+        try:
+            from .polymarket import get_user_positions
+            return get_user_positions(wallet_address)
+        except Exception as e:
+            logger.error(f"Polymarket positions failed: {e}")
+            return f"Failed: {str(e)}"
 
     def list_tools(self) -> list[str]:
         """List all registered tool names."""
