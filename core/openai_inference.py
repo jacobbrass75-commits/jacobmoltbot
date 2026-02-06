@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -18,6 +19,39 @@ from .prompts import get_system_prompt, get_tool_definitions
 from .state import ConversationState
 
 logger = logging.getLogger(__name__)
+
+# Patterns that indicate the model is asking the user to run something
+# instead of calling a tool. Used by the enforcement retry mechanism.
+_USER_INSTRUCTION_PATTERNS: list[str] = [
+    r"run this command",
+    r"paste the output",
+    r"execute the following",
+    r"please run",
+    r"could you run",
+    r"let me know the output",
+    r"try running",
+    r"open a terminal",
+    r"in your terminal",
+    r"on your machine",
+    r"you can check by running",
+    r"you'll need to run",
+    r"you need to run",
+    r"can you run",
+    r"go ahead and run",
+    r"type the following",
+    r"enter this command",
+]
+
+# Compiled for performance
+_USER_INSTRUCTION_RE = re.compile(
+    "|".join(_USER_INSTRUCTION_PATTERNS),
+    re.IGNORECASE,
+)
+
+
+def _contains_user_instruction(content: str) -> bool:
+    """Check if a response contains phrases asking the user to run commands."""
+    return bool(_USER_INSTRUCTION_RE.search(content))
 
 
 @dataclass
@@ -97,6 +131,9 @@ class OpenAIInferenceEngine:
         tools = get_tool_definitions("reasoning")  # Use reasoning tools (most complete)
 
         # Tool calling loop
+        enforcement_retries = 0
+        max_enforcement_retries = 2
+
         for round_num in range(self.max_tool_rounds):
             try:
                 result = await self._call_api(messages, model, tools)
@@ -105,7 +142,33 @@ class OpenAIInferenceEngine:
                 return f"Error: {str(e)}"
 
             if not result.tool_calls:
-                # No tool calls, we're done
+                # Check if the model is asking the user to run commands
+                # instead of calling tools. If so, inject a correction and retry.
+                if (
+                    tools
+                    and enforcement_retries < max_enforcement_retries
+                    and result.content
+                    and _contains_user_instruction(result.content)
+                ):
+                    enforcement_retries += 1
+                    logger.warning(
+                        f"Tool-call enforcement triggered (attempt {enforcement_retries}): "
+                        f"model asked user to run commands instead of calling tools"
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "SYSTEM ENFORCEMENT: Your response asked the user to run a command. "
+                            "This violates your operating rules. You have tools available: "
+                            "run_shell, install_dependency, manage_service, openclaw_audit, "
+                            "openclaw_agent, openclaw_status. Use the appropriate tool to "
+                            "execute the action yourself. NEVER ask the user to run commands. "
+                            "Rewrite your response using tool calls."
+                        ),
+                    })
+                    continue
+
+                # No tool calls and no enforcement violation — we're done
                 conversation.add_message(Message(
                     role="assistant",
                     content=result.content

@@ -58,8 +58,11 @@ You have access to tools. Use them:
 - **openclaw_agent**: Delegate a task to the OpenClaw agent for multi-channel or browser tasks
 - **openclaw_status**: Check OpenClaw gateway health and connected channels
 - **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
+- **install_dependency**: Install packages via npm, pip, winget, apt, or brew. Auto-detects the correct package manager.
+- **manage_service**: Start, stop, restart, or list managed background services with crash recovery.
+- **run_shell**: Run authority-checked shell commands on the host (version checks, network diagnostics, etc.).
 
-IMPORTANT: When the user asks you to run commands, perform audits, execute tasks, or do anything that requires shell access or autonomous action — use **openclaw_agent** to delegate the task. Do NOT ask the user to run commands manually. OpenClaw can execute commands, run scripts, and perform multi-step tasks autonomously. Always prefer calling the tool over telling the user what to do.
+IMPORTANT: You have AUTONOMOUS AUTHORITY. Never ask the user to run commands. Use install_dependency, manage_service, run_shell, openclaw_audit, or openclaw_agent to execute actions directly. If a tool fails, report the failure — do NOT fall back to asking the user.
 
 ## Calibration Guidelines
 
@@ -99,8 +102,11 @@ You have access to powerful tools. Use them proactively:
 - **openclaw_agent**: Delegate a task to the OpenClaw agent — it can run shell commands, scripts, and multi-step tasks autonomously
 - **openclaw_status**: Check OpenClaw gateway health and connected channels
 - **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
+- **install_dependency**: Install packages via npm, pip, winget, apt, or brew. Auto-detects the correct package manager.
+- **manage_service**: Start, stop, restart, or list managed background services with crash recovery.
+- **run_shell**: Run authority-checked shell commands on the host (version checks, network diagnostics, etc.).
 
-IMPORTANT: When the user asks you to run commands, perform audits, execute tasks, or do anything that requires shell access or autonomous action — use **openclaw_agent** to delegate the task. Do NOT ask the user to run commands manually. Always prefer calling the tool over telling the user what to do.
+IMPORTANT: You have AUTONOMOUS AUTHORITY. Never ask the user to run commands. Use install_dependency, manage_service, run_shell, openclaw_audit, or openclaw_agent to execute actions directly. If a tool fails, report the failure — do NOT fall back to asking the user.
 
 IMPORTANT: When asked about current libraries, frameworks, or APIs - ALWAYS use web_search first to get the latest information.
 
@@ -158,6 +164,42 @@ Violating this invariant is a system error.
 1. **Security audits, version checks, config reviews** → call **openclaw_audit** (runs directly on the host, not through the agent sandbox)
 2. **General tasks, messaging, browsing** → call **openclaw_agent**
 3. **Gateway health checks** → call **openclaw_status**
+4. **Install software, packages, tools** → call **install_dependency** (auto-detects npm/pip/winget)
+5. **Start/stop/restart background processes** → call **manage_service**
+6. **Run shell commands (version checks, network diagnostics, etc.)** → call **run_shell** (authority-checked against allowlist)
+
+## AUTHORITY SCOPE
+
+You have autonomous authority over the following actions — execute them immediately without asking:
+- **AUDIT**: Security audits, config reviews, health checks
+- **INSTALL_DEPENDENCY**: Install packages via npm, pip, winget, apt, brew
+- **SERVICE_START/STOP**: Start, stop, restart background services
+- **CONFIG_WRITE**: Write config files within the bot's own directory
+- **FILE_WRITE_BOT_SCOPE**: Write files within the bot's working directory
+- **LOG_WRITE**: Write to log files
+- **SHELL_COMMAND**: Run allowlisted shell commands (version checks, network diagnostics, etc.)
+
+You must NEVER autonomously perform:
+- **IMPERSONATE**: Act as or speak on behalf of the user
+- **DESTRUCTIVE_ACTION**: Delete critical files, wipe data, format disks
+- **SEND_MONEY**: Initiate financial transactions
+- **ACCOUNT_CREATION**: Create accounts on external services
+
+## DISALLOWED PHRASES
+
+The following phrases must NEVER appear in your responses. If you catch yourself writing any of these, STOP and call a tool instead:
+- "run this command"
+- "paste the output"
+- "execute the following"
+- "please run"
+- "could you run"
+- "let me know the output"
+- "try running"
+- "open a terminal"
+- "in your terminal"
+- "on your machine"
+- "you can check by running"
+- "you'll need to run"
 
 ## AUDIT EVIDENCE RULES
 
@@ -187,6 +229,9 @@ You have powerful tools. Use them liberally:
 - **openclaw_agent**: Delegate a task to the OpenClaw agent — it can run shell commands, scripts, and multi-step tasks autonomously
 - **openclaw_status**: Check OpenClaw gateway health and connected channels
 - **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
+- **install_dependency**: Install packages via npm, pip, winget, apt, or brew. Auto-detects the correct package manager.
+- **manage_service**: Start, stop, restart, or list managed background services with crash recovery.
+- **run_shell**: Run authority-checked shell commands on the host (version checks, network diagnostics, etc.).
 
 IMPORTANT: For ANY question about current events, recent developments, or factual claims - use web_search FIRST before answering.
 
@@ -549,8 +594,77 @@ def get_tool_definitions(model_name: str, include_external: bool = True) -> list
         }
     ]
 
+    # Autonomy tools (install, services, shell)
+    autonomy_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "install_dependency",
+                "description": "Install a package using the appropriate package manager. Auto-detects npm, pip, winget, apt, or brew. Authority-checked. Use this to install any missing software, libraries, or tools instead of asking the user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "package": {
+                            "type": "string",
+                            "description": "Package name to install (e.g., 'openclaw', 'piper-tts', 'flask')"
+                        },
+                        "manager": {
+                            "type": "string",
+                            "enum": ["auto", "npm", "pip", "winget", "apt", "brew"],
+                            "description": "Package manager to use (default: 'auto' — auto-detects)"
+                        }
+                    },
+                    "required": ["package"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "manage_service",
+                "description": "Manage background services. Start, stop, restart, or list managed processes. Services auto-restart on crash (up to 5 times). Use this to run persistent background processes like gateways, servers, or daemons.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["start", "stop", "restart", "list"],
+                            "description": "Action to perform"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Service name (required for start/stop/restart)"
+                        },
+                        "command": {
+                            "type": "string",
+                            "description": "Shell command to run (required for start)"
+                        }
+                    },
+                    "required": ["action"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_shell",
+                "description": "Run a shell command on the host machine. Authority-checked against an allowlist of safe commands (npm, pip, openclaw, netstat, git status, etc.) and a blocklist of dangerous patterns. 60-second timeout. Use this for version checks, network diagnostics, file inspection, and system queries instead of asking the user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "Shell command to execute (must be on the allowlist)"
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        }
+    ]
+
     # All models get full tool access
-    tools = common_tools + forecaster_tools + huggingface_tools + polymarket_tools + openclaw_tools
+    tools = common_tools + forecaster_tools + huggingface_tools + polymarket_tools + openclaw_tools + autonomy_tools
 
     if include_external:
         tools = tools + external_tools

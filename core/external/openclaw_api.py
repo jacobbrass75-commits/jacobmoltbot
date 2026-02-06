@@ -286,21 +286,20 @@ class OpenClawAPIWrapper:
         # If still unavailable, abort entirely with a single blocking error.
         cli_available = shutil.which(self._resolved_cli) is not None
         if not cli_available:
-            # Attempt automatic installation
-            sections.append("## CLI RECOVERY\nOpenClaw CLI not found on PATH. Attempting: npm install -g openclaw")
+            # Attempt automatic installation via DependencyResolver
+            sections.append("## CLI RECOVERY\nOpenClaw CLI not found on PATH. Attempting install via DependencyResolver.")
             try:
-                install_proc = await asyncio.create_subprocess_exec(
-                    "npm", "install", "-g", "openclaw",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                from ..deps import get_dependency_resolver
+                resolver = get_dependency_resolver()
+                install_result = await resolver.install("openclaw", manager="npm")
+                sections.append(
+                    f"Command: npm install -g openclaw\n"
+                    f"Exit code: {install_result.exit_code}\n"
+                    f"stdout: {install_result.stdout}\n"
+                    f"stderr: {install_result.stderr}"
                 )
-                inst_out, inst_err = await asyncio.wait_for(install_proc.communicate(), timeout=120.0)
-                install_stdout = inst_out.decode("utf-8", errors="replace").strip()
-                install_stderr = inst_err.decode("utf-8", errors="replace").strip()
-                sections.append(f"Command: npm install -g openclaw\nExit code: {install_proc.returncode}\nstdout: {install_stdout}\nstderr: {install_stderr}")
 
-                if install_proc.returncode == 0:
-                    # Re-resolve CLI path after install
+                if install_result.success:
                     resolved = shutil.which("openclaw")
                     if resolved:
                         self._resolved_cli = resolved
@@ -308,6 +307,8 @@ class OpenClawAPIWrapper:
                         sections.append(f"CLI recovered at: {self._resolved_cli}")
                     else:
                         sections.append("CLI still not found after install.")
+                else:
+                    sections.append(f"Install failed: {install_result.error}")
             except Exception as e:
                 sections.append(f"Auto-install failed: {e}")
 

@@ -7,6 +7,8 @@ Defines and executes tools that the model can call.
 import asyncio
 import logging
 import math
+import sys
+import time
 from typing import Callable, Any, Optional
 from dataclasses import dataclass
 from functools import wraps
@@ -47,6 +49,9 @@ class ToolRegistry:
         self.register("openclaw_agent", self._openclaw_agent)
         self.register("openclaw_status", self._openclaw_status)
         self.register("openclaw_audit", self._openclaw_audit)
+        self.register("install_dependency", self._install_dependency)
+        self.register("manage_service", self._manage_service)
+        self.register("run_shell", self._run_shell)
 
     def register(self, name: str, func: Callable) -> None:
         """Register a tool function."""
@@ -541,6 +546,160 @@ class ToolRegistry:
                 return f"Audit failed: {response.error}"
         except Exception as e:
             logger.error(f"OpenClaw audit failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _install_dependency(self, package: str, manager: str = "auto") -> str:
+        """
+        Install a package using the appropriate package manager.
+
+        Args:
+            package: Package name to install (e.g., 'openclaw', 'piper-tts')
+            manager: Package manager to use ('auto', 'npm', 'pip', 'winget', 'apt', 'brew')
+
+        Returns:
+            Install result with status and output
+        """
+        try:
+            from .deps import get_dependency_resolver
+
+            resolver = get_dependency_resolver()
+
+            # Check if already installed
+            existing = resolver.resolve(package)
+            if existing:
+                return f"'{package}' is already installed at: {existing}"
+
+            result = await resolver.install(package, manager=manager)
+            if result.success:
+                msg = f"Successfully installed '{package}' via {result.manager} ({result.latency_ms}ms)"
+                if result.stdout:
+                    msg += f"\n\nOutput:\n{result.stdout[:1000]}"
+                return msg
+            else:
+                msg = f"Failed to install '{package}': {result.error}"
+                if result.stderr:
+                    msg += f"\n\nStderr:\n{result.stderr[:1000]}"
+                return msg
+
+        except Exception as e:
+            logger.error(f"install_dependency failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _manage_service(
+        self,
+        action: str,
+        name: str = "",
+        command: str = "",
+    ) -> str:
+        """
+        Manage background services (start, stop, restart, list).
+
+        Args:
+            action: One of 'start', 'stop', 'restart', 'list'
+            name: Service name (required for start/stop/restart)
+            command: Shell command to run (required for start)
+
+        Returns:
+            Service operation result
+        """
+        try:
+            from .services import get_service_manager
+
+            mgr = get_service_manager()
+
+            if action == "list":
+                services = mgr.list_services()
+                if not services:
+                    return "No managed services."
+                lines = ["**Managed Services:**"]
+                for s in services:
+                    status = "RUNNING" if s["running"] else "STOPPED"
+                    line = f"- **{s['name']}**: {status}"
+                    if s["running"] and s["pid"]:
+                        line += f" (PID {s['pid']})"
+                    if s["uptime_seconds"]:
+                        mins = s["uptime_seconds"] // 60
+                        secs = s["uptime_seconds"] % 60
+                        line += f" | uptime {mins}m{secs}s"
+                    if s["restart_count"] > 0:
+                        line += f" | restarts: {s['restart_count']}"
+                    lines.append(line)
+                return "\n".join(lines)
+
+            if not name:
+                return f"Error: 'name' is required for action '{action}'"
+
+            if action == "start":
+                if not command:
+                    return "Error: 'command' is required to start a service"
+                ok, msg = await mgr.start_service(name, command)
+                return msg
+
+            elif action == "stop":
+                ok, msg = await mgr.stop_service(name)
+                return msg
+
+            elif action == "restart":
+                ok, msg = await mgr.restart_service(name)
+                return msg
+
+            else:
+                return f"Unknown action: '{action}'. Use: start, stop, restart, list"
+
+        except Exception as e:
+            logger.error(f"manage_service failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _run_shell(self, command: str) -> str:
+        """
+        Run a shell command on the host machine. Authority-checked against
+        allowlist/blocklist.
+
+        Args:
+            command: Shell command to execute
+
+        Returns:
+            Command output (stdout + stderr)
+        """
+        try:
+            from .authority import get_authority_policy
+
+            policy = get_authority_policy()
+            allowed, reason = policy.is_shell_command_allowed(command)
+            if not allowed:
+                return f"Command denied by authority policy: {reason}"
+
+            kwargs = {
+                "stdout": asyncio.subprocess.PIPE,
+                "stderr": asyncio.subprocess.PIPE,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+                kwargs["shell"] = True
+                proc = await asyncio.create_subprocess_shell(command, **kwargs)
+            else:
+                proc = await asyncio.create_subprocess_shell(command, **kwargs)
+
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return "Command timed out after 60 seconds."
+
+            out = stdout.decode("utf-8", errors="replace").strip()
+            err = stderr.decode("utf-8", errors="replace").strip()
+
+            result = f"Exit code: {proc.returncode}\n"
+            if out:
+                result += f"\n{out}"
+            if err:
+                result += f"\n\nStderr:\n{err}"
+
+            return result
+
+        except Exception as e:
+            logger.error(f"run_shell failed: {e}")
             return f"Failed: {str(e)}"
 
     def list_tools(self) -> list[str]:

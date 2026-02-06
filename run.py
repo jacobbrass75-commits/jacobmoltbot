@@ -162,6 +162,58 @@ async def main() -> None:
     except Exception:
         print(f"  - OpenClaw: {Fore.YELLOW}not available{Style.RESET_ALL}")
 
+    # Initialize ServiceManager
+    service_manager = None
+    try:
+        from core.services import get_service_manager
+        service_log_dir = base_dir / config['paths']['logs_dir']
+        service_manager = get_service_manager(log_dir=service_log_dir)
+        print(f"\n{Fore.CYAN}ServiceManager:{Style.RESET_ALL} {Fore.GREEN}initialized{Style.RESET_ALL}")
+
+        # Auto-start OpenClaw gateway if not already running
+        # Note: `openclaw gateway start` is a daemon launcher — it starts the
+        # gateway in the background and exits (code 0). So we run it once,
+        # not as a restart-on-crash service.
+        try:
+            import shutil
+            openclaw_cli = shutil.which("openclaw")
+            if openclaw_cli:
+                # Only start if not already connected
+                try:
+                    from core.external.openclaw_api import get_openclaw_api
+                    oc = get_openclaw_api()
+                    already_running = oc.is_available()
+                except Exception:
+                    already_running = False
+
+                if already_running:
+                    print(f"  - openclaw-gateway: {Fore.GREEN}already running{Style.RESET_ALL}")
+                else:
+                    ok, msg = await service_manager.start_service(
+                        name="openclaw-gateway",
+                        command=f"{openclaw_cli} gateway start",
+                        restart_on_crash=False,  # Daemon launcher exits after starting
+                    )
+                    if ok:
+                        print(f"  - openclaw-gateway: {Fore.GREEN}started{Style.RESET_ALL}")
+                    else:
+                        print(f"  - openclaw-gateway: {Fore.YELLOW}{msg}{Style.RESET_ALL}")
+            else:
+                print(f"  - openclaw-gateway: {Fore.YELLOW}CLI not found, skipping{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"  - openclaw-gateway: {Fore.YELLOW}failed to start: {e}{Style.RESET_ALL}")
+
+    except Exception as e:
+        print(f"{Fore.YELLOW}ServiceManager not available: {e}{Style.RESET_ALL}")
+
+    # Initialize Authority Policy (logs available actions)
+    try:
+        from core.authority import get_authority_policy
+        get_authority_policy()
+        logger.info("AuthorityPolicy loaded")
+    except Exception as e:
+        logger.warning(f"AuthorityPolicy failed to initialize: {e}")
+
     # Initialize Telegram bot if configured
     telegram_bot = None
     if telegram_token:
@@ -205,6 +257,9 @@ async def main() -> None:
     finally:
         # Cleanup
         logger.info("Shutting down...")
+
+        if service_manager:
+            await service_manager.shutdown()
 
         if telegram_bot:
             await telegram_bot.stop()
