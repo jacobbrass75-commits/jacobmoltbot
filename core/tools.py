@@ -46,6 +46,7 @@ class ToolRegistry:
         self.register("openclaw_send_message", self._openclaw_send_message)
         self.register("openclaw_agent", self._openclaw_agent)
         self.register("openclaw_status", self._openclaw_status)
+        self.register("openclaw_audit", self._openclaw_audit)
 
     def register(self, name: str, func: Callable) -> None:
         """Register a tool function."""
@@ -514,6 +515,32 @@ class ToolRegistry:
                 return f"Status check failed: {response.error}"
         except Exception as e:
             logger.error(f"OpenClaw status failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _openclaw_audit(self, auto_fix: bool = False) -> str:
+        """
+        Run a comprehensive OpenClaw security audit on the local machine.
+
+        Args:
+            auto_fix: If True, also apply automatic fixes
+
+        Returns:
+            Full audit results
+        """
+        try:
+            from .external.openclaw_api import get_openclaw_api
+
+            api = get_openclaw_api()
+            if not api.is_available():
+                return "OpenClaw is not available. Check that the CLI is installed and gateway is configured."
+
+            response = await api.run_security_audit(auto_fix=auto_fix)
+            if response.success:
+                return response.content
+            else:
+                return f"Audit failed: {response.error}"
+        except Exception as e:
+            logger.error(f"OpenClaw audit failed: {e}")
             return f"Failed: {str(e)}"
 
     def list_tools(self) -> list[str]:

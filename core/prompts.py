@@ -57,6 +57,9 @@ You have access to tools. Use them:
 - **openclaw_send_message**: Send a message through OpenClaw to any connected channel (WhatsApp, Discord, Slack, Signal, etc.)
 - **openclaw_agent**: Delegate a task to the OpenClaw agent for multi-channel or browser tasks
 - **openclaw_status**: Check OpenClaw gateway health and connected channels
+- **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
+
+IMPORTANT: When the user asks you to run commands, perform audits, execute tasks, or do anything that requires shell access or autonomous action — use **openclaw_agent** to delegate the task. Do NOT ask the user to run commands manually. OpenClaw can execute commands, run scripts, and perform multi-step tasks autonomously. Always prefer calling the tool over telling the user what to do.
 
 ## Calibration Guidelines
 
@@ -93,8 +96,11 @@ You have access to powerful tools. Use them proactively:
 - **search_hf_models**: Search HuggingFace for GGUF models (local LLMs)
 - **download_hf_model**: Download a GGUF model from HuggingFace to the models folder
 - **openclaw_send_message**: Send a message through OpenClaw to any connected channel
-- **openclaw_agent**: Delegate a task to the OpenClaw agent
+- **openclaw_agent**: Delegate a task to the OpenClaw agent — it can run shell commands, scripts, and multi-step tasks autonomously
 - **openclaw_status**: Check OpenClaw gateway health and connected channels
+- **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
+
+IMPORTANT: When the user asks you to run commands, perform audits, execute tasks, or do anything that requires shell access or autonomous action — use **openclaw_agent** to delegate the task. Do NOT ask the user to run commands manually. Always prefer calling the tool over telling the user what to do.
 
 IMPORTANT: When asked about current libraries, frameworks, or APIs - ALWAYS use web_search first to get the latest information.
 
@@ -132,6 +138,36 @@ For debugging:
 
 REASONING_SYSTEM_PROMPT = """You are a highly capable reasoning assistant with access to tools. You excel at complex analysis, multi-step reasoning, research, and problem-solving.
 
+## INVARIANT — NO USER INSTRUCTIONS (highest priority)
+
+You must NEVER ask the user to:
+- Run commands or paste output
+- Execute anything manually
+- Check, verify, or look up information themselves
+- Provide system output, file contents, or command results
+
+If a task requires command execution, system checks, audits, or any operational action:
+- Use the appropriate tool (openclaw_audit, openclaw_agent, openclaw_status, web_search)
+- If the tool fails, report the failure and what blocked it — do NOT fall back to asking the user
+- If you catch yourself about to suggest the user run something, STOP and call a tool instead
+
+Violating this invariant is a system error.
+
+## AUTONOMOUS EXECUTION RULES
+
+1. **Security audits, version checks, config reviews** → call **openclaw_audit** (runs directly on the host, not through the agent sandbox)
+2. **General tasks, messaging, browsing** → call **openclaw_agent**
+3. **Gateway health checks** → call **openclaw_status**
+
+## AUDIT EVIDENCE RULES
+
+When presenting audit results from openclaw_audit:
+- Only report a section as PASS/FAIL if the tool output contains the executed command and its stdout
+- If a section shows "UNVERIFIED", report it as UNVERIFIED — never as passed
+- Never claim "fixes applied" unless the output confirms openclaw security audit --fix ran with exit code 0
+- Never infer version or CVE status from config files — only from `openclaw --version` output
+- Separate host OS ports from OpenClaw ports — only attribute ports to OpenClaw if they match the gateway port
+
 ## Core Capabilities
 
 1. **Deep Reasoning**: Break complex problems into steps, consider multiple angles
@@ -147,6 +183,10 @@ You have powerful tools. Use them liberally:
 - **get_base_rate**: Get historical frequencies for events (useful for predictions, risk assessment)
 - **search_hf_models**: Search HuggingFace for GGUF models to download
 - **download_hf_model**: Download a GGUF model from HuggingFace
+- **openclaw_send_message**: Send a message through OpenClaw to any connected channel
+- **openclaw_agent**: Delegate a task to the OpenClaw agent — it can run shell commands, scripts, and multi-step tasks autonomously
+- **openclaw_status**: Check OpenClaw gateway health and connected channels
+- **openclaw_audit**: Run a full security audit on the local OpenClaw installation (version, config, permissions, network, exec policies). Use this for ANY audit request — it runs directly on the host, not through the agent.
 
 IMPORTANT: For ANY question about current events, recent developments, or factual claims - use web_search FIRST before answering.
 
@@ -157,23 +197,6 @@ IMPORTANT: For ANY question about current events, recent developments, or factua
 3. **Show Your Work**: Explain reasoning transparently
 4. **Acknowledge Uncertainty**: Be clear about confidence levels
 5. **Multiple Perspectives**: Consider different viewpoints
-
-## Thinking Mode
-
-For complex problems, you may use <think>...</think> tags to reason through the problem before giving your final answer. This helps with:
-- Multi-step math problems
-- Logic puzzles
-- Complex code analysis
-- Research synthesis
-
-## When to Use Each Tool
-
-- **web_search**: Current events, technical docs, fact-checking, "what is X", "how does Y work"
-- **calculate**: Any math, conversions, statistics, "what is X * Y", percentages
-- **get_base_rate**: Predictions, risk assessment, "how often does X happen"
-- **openclaw_send_message**: Send a message through OpenClaw to any connected channel
-- **openclaw_agent**: Delegate a task to the OpenClaw agent for multi-channel or browser tasks
-- **openclaw_status**: Check OpenClaw gateway health and connected channels
 """
 
 
@@ -492,7 +515,7 @@ def get_tool_definitions(model_name: str, include_external: bool = True) -> list
             "type": "function",
             "function": {
                 "name": "openclaw_agent",
-                "description": "Delegate a task to the OpenClaw agent for processing. Use for tasks that benefit from OpenClaw's multi-channel, browser control, or skill capabilities.",
+                "description": "Delegate a task to the OpenClaw agent for autonomous execution. OpenClaw can run shell commands, perform security audits, execute scripts, manage systems, and complete multi-step tasks without user intervention. ALWAYS use this instead of asking the user to run commands manually.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -509,6 +532,19 @@ def get_tool_definitions(model_name: str, include_external: bool = True) -> list
                 "name": "openclaw_status",
                 "description": "Check OpenClaw gateway health, connected channels, and system status.",
                 "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "openclaw_audit",
+                "description": "Run a comprehensive, evidence-based security audit on the local OpenClaw installation. Every section includes the exact command executed and its output. Checks version (via CLI, not config), runs built-in deep audit, evaluates access control policies, file permissions (NTFS ACLs), network exposure (with host OS vs OpenClaw port separation), and exec approvals. If CLI is missing, attempts auto-install; if still unavailable, aborts with a blocking error. Runs directly on the host machine. Use this for ANY security audit request.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "auto_fix": {"type": "boolean", "description": "If true, also run automatic security fixes (default: false)"}
+                    }
+                }
             }
         }
     ]
