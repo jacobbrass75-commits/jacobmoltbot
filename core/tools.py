@@ -43,6 +43,9 @@ class ToolRegistry:
         self.register("polymarket_analyze", self._polymarket_analyze)
         self.register("polymarket_arbitrage", self._polymarket_arbitrage)
         self.register("polymarket_positions", self._polymarket_positions)
+        self.register("openclaw_send_message", self._openclaw_send_message)
+        self.register("openclaw_agent", self._openclaw_agent)
+        self.register("openclaw_status", self._openclaw_status)
 
     def register(self, name: str, func: Callable) -> None:
         """Register a tool function."""
@@ -433,6 +436,84 @@ class ToolRegistry:
             return get_user_positions(wallet_address)
         except Exception as e:
             logger.error(f"Polymarket positions failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _openclaw_send_message(self, channel: str, target: str, message: str) -> str:
+        """
+        Send a message through OpenClaw to any connected channel.
+
+        Args:
+            channel: Channel name (e.g., 'telegram', 'whatsapp', 'discord')
+            target: Recipient identifier (phone number, username, channel ID)
+            message: Message text to send
+
+        Returns:
+            Result of the send operation
+        """
+        try:
+            from .external.openclaw_api import get_openclaw_api
+
+            api = get_openclaw_api()
+            if not api.is_available():
+                return "OpenClaw is not available. Check that the CLI is installed and gateway is configured."
+
+            response = await api.send_message(channel, target, message)
+            if response.success:
+                return response.content or "Message sent successfully."
+            else:
+                return f"Send failed: {response.error}"
+        except Exception as e:
+            logger.error(f"OpenClaw send_message failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _openclaw_agent(self, message: str, thinking: str = "medium") -> str:
+        """
+        Delegate a task to the OpenClaw agent.
+
+        Args:
+            message: Task or question for the OpenClaw agent
+            thinking: Reasoning depth (off, minimal, low, medium, high)
+
+        Returns:
+            Agent result
+        """
+        try:
+            from .external.openclaw_api import get_openclaw_api
+
+            api = get_openclaw_api()
+            if not api.is_available():
+                return "OpenClaw is not available. Check that the CLI is installed and gateway is configured."
+
+            response = await api.run_agent(message, thinking)
+            if response.success:
+                return response.content
+            else:
+                return f"Agent failed: {response.error}"
+        except Exception as e:
+            logger.error(f"OpenClaw agent failed: {e}")
+            return f"Failed: {str(e)}"
+
+    async def _openclaw_status(self) -> str:
+        """
+        Check OpenClaw gateway and channel health.
+
+        Returns:
+            Status information
+        """
+        try:
+            from .external.openclaw_api import get_openclaw_api
+
+            api = get_openclaw_api()
+            if not api.is_available():
+                return "OpenClaw is not available. Check that the CLI is installed and gateway is configured."
+
+            response = await api.get_status()
+            if response.success:
+                return response.content
+            else:
+                return f"Status check failed: {response.error}"
+        except Exception as e:
+            logger.error(f"OpenClaw status failed: {e}")
             return f"Failed: {str(e)}"
 
     def list_tools(self) -> list[str]:

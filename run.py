@@ -151,6 +151,17 @@ async def main() -> None:
         print(f"{Fore.YELLOW}External AI layer not available: {e}{Style.RESET_ALL}")
         print("Install with: pip install anthropic openai python-dotenv")
 
+    # Check OpenClaw availability
+    try:
+        from core.external.openclaw_api import get_openclaw_api
+        openclaw = get_openclaw_api()
+        if openclaw.is_available():
+            print(f"  - OpenClaw: {Fore.GREEN}connected{Style.RESET_ALL}")
+        else:
+            print(f"  - OpenClaw: {Fore.YELLOW}not running{Style.RESET_ALL}")
+    except Exception:
+        print(f"  - OpenClaw: {Fore.YELLOW}not available{Style.RESET_ALL}")
+
     # Initialize Telegram bot if configured
     telegram_bot = None
     if telegram_token:

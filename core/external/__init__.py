@@ -53,6 +53,12 @@ from .manus_api import (
     ManusActionLog,
     get_manus_api
 )
+from .openclaw_api import (
+    OpenClawAPIWrapper,
+    OpenClawRequest,
+    OpenClawResponse,
+    get_openclaw_api
+)
 from .delegation import (
     DelegationPolicy,
     DelegationDecision,
@@ -95,6 +101,12 @@ __all__ = [
     "ManusAction",
     "ManusActionLog",
     "get_manus_api",
+
+    # OpenClaw
+    "OpenClawAPIWrapper",
+    "OpenClawRequest",
+    "OpenClawResponse",
+    "get_openclaw_api",
 
     # Delegation
     "DelegationPolicy",
@@ -140,6 +152,7 @@ class ExternalIntelligenceLayer:
         self._claude = get_claude_api()
         self._openai = get_openai_api()
         self._manus = get_manus_api(log_dir)
+        self._openclaw = get_openclaw_api()
         self._policy = get_delegation_policy()
 
         self._execution_count = 0
@@ -149,13 +162,15 @@ class ExternalIntelligenceLayer:
         logger.info(f"  Claude: {'available' if self._claude.is_available() else 'not configured'}")
         logger.info(f"  OpenAI: {'available' if self._openai.is_available() else 'not configured'}")
         logger.info(f"  Manus: {'available' if self._manus.is_available() else 'not configured'}")
+        logger.info(f"  OpenClaw: {'available' if self._openclaw.is_available() else 'not configured'}")
 
     def get_availability(self) -> dict[str, bool]:
         """Get availability status of all external APIs."""
         return {
             "claude": self._claude.is_available(),
             "openai": self._openai.is_available(),
-            "manus": self._manus.is_available()
+            "manus": self._manus.is_available(),
+            "openclaw": self._openclaw.is_available()
         }
 
     def validate_startup(self, required: list[APIProvider] = None) -> tuple[bool, list[str]]:
@@ -308,6 +323,64 @@ class ExternalIntelligenceLayer:
             error=response.error
         )
 
+    async def send_openclaw_message(
+        self,
+        channel: str,
+        target: str,
+        message: str
+    ) -> ExecutionResult:
+        """
+        Send a message through OpenClaw.
+
+        Args:
+            channel: Channel name (e.g., 'telegram', 'whatsapp', 'discord')
+            target: Recipient identifier
+            message: Message text to send
+
+        Returns:
+            Sanitized ExecutionResult
+        """
+        response = await self._openclaw.send_message(channel, target, message)
+        self._execution_count += 1
+
+        return ExecutionResult(
+            success=response.success,
+            target=DelegationTarget.LOCAL,  # OpenClaw is a local tool
+            content=response.content,
+            summary=response.summary,
+            tokens_used=0,
+            latency_ms=response.latency_ms,
+            error=response.error
+        )
+
+    async def call_openclaw_agent(
+        self,
+        message: str,
+        thinking: str = "medium"
+    ) -> ExecutionResult:
+        """
+        Delegate a task to the OpenClaw agent.
+
+        Args:
+            message: Task or question for the agent
+            thinking: Reasoning depth (off, minimal, low, medium, high)
+
+        Returns:
+            Sanitized ExecutionResult
+        """
+        response = await self._openclaw.run_agent(message, thinking)
+        self._execution_count += 1
+
+        return ExecutionResult(
+            success=response.success,
+            target=DelegationTarget.LOCAL,  # OpenClaw is a local tool
+            content=response.content,
+            summary=response.summary,
+            tokens_used=0,
+            latency_ms=response.latency_ms,
+            error=response.error
+        )
+
     async def execute_delegated(
         self,
         task: str,
@@ -391,6 +464,7 @@ class ExternalIntelligenceLayer:
             "claude": self._claude.get_stats(),
             "openai": self._openai.get_stats(),
             "manus": self._manus.get_session_stats(),
+            "openclaw": self._openclaw.get_stats(),
             "delegation_log_size": len(self._policy.get_decision_log())
         }
 

@@ -54,6 +54,9 @@ You have access to tools. Use them:
 - **polymarket_analyze**: Analyze a specific market (prices, signals)
 - **polymarket_arbitrage**: Find arbitrage opportunities
 - **polymarket_positions**: Look up user positions by wallet
+- **openclaw_send_message**: Send a message through OpenClaw to any connected channel (WhatsApp, Discord, Slack, Signal, etc.)
+- **openclaw_agent**: Delegate a task to the OpenClaw agent for multi-channel or browser tasks
+- **openclaw_status**: Check OpenClaw gateway health and connected channels
 
 ## Calibration Guidelines
 
@@ -89,6 +92,9 @@ You have access to powerful tools. Use them proactively:
 - **get_base_rate**: Get historical data on software project success rates, bug frequencies, etc.
 - **search_hf_models**: Search HuggingFace for GGUF models (local LLMs)
 - **download_hf_model**: Download a GGUF model from HuggingFace to the models folder
+- **openclaw_send_message**: Send a message through OpenClaw to any connected channel
+- **openclaw_agent**: Delegate a task to the OpenClaw agent
+- **openclaw_status**: Check OpenClaw gateway health and connected channels
 
 IMPORTANT: When asked about current libraries, frameworks, or APIs - ALWAYS use web_search first to get the latest information.
 
@@ -165,6 +171,9 @@ For complex problems, you may use <think>...</think> tags to reason through the 
 - **web_search**: Current events, technical docs, fact-checking, "what is X", "how does Y work"
 - **calculate**: Any math, conversions, statistics, "what is X * Y", percentages
 - **get_base_rate**: Predictions, risk assessment, "how often does X happen"
+- **openclaw_send_message**: Send a message through OpenClaw to any connected channel
+- **openclaw_agent**: Delegate a task to the OpenClaw agent for multi-channel or browser tasks
+- **openclaw_status**: Check OpenClaw gateway health and connected channels
 """
 
 
@@ -461,8 +470,51 @@ def get_tool_definitions(model_name: str, include_external: bool = True) -> list
         }
     ]
 
+    # OpenClaw tools
+    openclaw_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "openclaw_send_message",
+                "description": "Send a message through OpenClaw to any connected channel (WhatsApp, Discord, Slack, Signal, etc.)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "channel": {"type": "string", "description": "Channel name (e.g., 'telegram', 'whatsapp', 'discord', 'slack', 'signal')"},
+                        "target": {"type": "string", "description": "Recipient identifier (phone number, username, channel ID)"},
+                        "message": {"type": "string", "description": "Message text to send"}
+                    },
+                    "required": ["channel", "target", "message"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "openclaw_agent",
+                "description": "Delegate a task to the OpenClaw agent for processing. Use for tasks that benefit from OpenClaw's multi-channel, browser control, or skill capabilities.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string", "description": "Task or question for the OpenClaw agent"},
+                        "thinking": {"type": "string", "enum": ["off", "minimal", "low", "medium", "high"], "description": "Reasoning depth (default: medium)"}
+                    },
+                    "required": ["message"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "openclaw_status",
+                "description": "Check OpenClaw gateway health, connected channels, and system status.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }
+    ]
+
     # All models get full tool access
-    tools = common_tools + forecaster_tools + huggingface_tools + polymarket_tools
+    tools = common_tools + forecaster_tools + huggingface_tools + polymarket_tools + openclaw_tools
 
     if include_external:
         tools = tools + external_tools
